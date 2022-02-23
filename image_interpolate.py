@@ -4,6 +4,7 @@ Created on Tue Feb 22 18:06:22 2022
 
 @author: acmor
 """
+###############################################################################
 
 import os
 import cv2
@@ -12,12 +13,16 @@ import argparse
 from os import listdir
 from torch.nn import functional as F
 import warnings
+
+###############################################################################
+
 warnings.filterwarnings("ignore")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_grad_enabled(False) # deactivates gradient calculation
 if torch.cuda.is_available():
     torch.backends.cudnn.enabled = True
     torch.backends.cudnn.benchmark = True
+    
 def load_model(modelDir:str):
     try:
         try:
@@ -38,21 +43,15 @@ def load_model(modelDir:str):
     model.eval()
     model.device()
     return model
+
 def interpolate_img(img_0:str,img_1:str,exp:int,model,ratio=0,rthreshold=0.02,
                     rmaxcycles=8):
-    
 
-    if  img_0.endswith('.exr') and img_1.endswith('.exr'):
-        img0 = cv2.imread(img_0, cv2.IMREAD_COLOR | cv2.IMREAD_ANYDEPTH)
-        img1 = cv2.imread(img_1, cv2.IMREAD_COLOR | cv2.IMREAD_ANYDEPTH)
-        img0 = (torch.tensor(img0.transpose(2, 0, 1)).to(device)).unsqueeze(0)
-        img1 = (torch.tensor(img1.transpose(2, 0, 1)).to(device)).unsqueeze(0)
 
-    else:
-        img0 = cv2.imread(img_0, cv2.IMREAD_UNCHANGED)
-        img1 = cv2.imread(img_1, cv2.IMREAD_UNCHANGED)
-        img0 =(torch.tensor(img0.transpose(2, 0, 1)).to(device) / 255.).unsqueeze(0)
-        img1 =(torch.tensor(img1.transpose(2, 0, 1)).to(device) / 255.).unsqueeze(0)
+    img0 = cv2.imread(img_0, cv2.IMREAD_UNCHANGED)
+    img1 = cv2.imread(img_1, cv2.IMREAD_UNCHANGED)
+    img0 =(torch.tensor(img0.transpose(2, 0, 1)).to(device) / 255.).unsqueeze(0)
+    img1 =(torch.tensor(img1.transpose(2, 0, 1)).to(device) / 255.).unsqueeze(0)
         
     n, c, h, w = img0.shape
     ph = ((h - 1) // 32 + 1) * 32
@@ -96,19 +95,19 @@ def interpolate_img(img_0:str,img_1:str,exp:int,model,ratio=0,rthreshold=0.02,
             tmp.append(img1)
             img_list = tmp
     return img_list,h,w
-def save_images(img_list:list,img_0:str,h:int,w:int):
-    if not os.path.exists('output'):
-        os.mkdir('output')
+def save_images(img_list:list,img_0:str,output_path:str,h:int,w:int):
+    if not os.path.exists(output_path):
+        os.mkdir(output_path)
     for i in range(len(img_list)):
         if img_0.endswith('.exr') and img_1.endswith('.exr'):
-            cv2.imwrite('output/img{}.exr'.format(i), (img_list[i][0]).cpu().numpy().transpose(1, 2, 0)[:h, :w], [cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_HALF])
+            cv2.imwrite('{}/img{}.exr'.format(output_path,i), (img_list[i][0]).cpu().numpy().transpose(1, 2, 0)[:h, :w], [cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_HALF])
         else:
-            cv2.imwrite('output/img{}.png'.format(i), (img_list[i][0] * 255).byte().cpu().numpy().transpose(1, 2, 0)[:h, :w])
+            cv2.imwrite('{}/img{}.png'.format(output_path,i), (img_list[i][0] * 255).byte().cpu().numpy().transpose(1, 2, 0)[:h, :w])
 
 
-def interpolate_folder(files_path:str,exp:int,ratio=0,rthreshold=0.02,
+def interpolate_folder(files_path:str,output_path:str,exp:int,ratio=0,rthreshold=0.02,
                     rmaxcycles=8,modelDir='train_log'):
-    images=[img for img in listdir(files_path) if img.endswith('.png')]  
+    images=[img for img in listdir(files_path) if img.endswith('.jpg')]  
     model=load_model(modelDir)
     interpolated=list()
     for i in range(len(images)-1):
@@ -118,8 +117,8 @@ def interpolate_folder(files_path:str,exp:int,ratio=0,rthreshold=0.02,
             interpolated=[*interpolated,*three]
         else:
             interpolated=[*interpolated,*three[:-1]]
-    save_images(interpolated,files_path+'/'+images[0],h,w)
+    save_images(interpolated,files_path+'/'+images[0],output_path,h,w)
         
 if __name__ == "__main__":
 
-    interpolate_folder('./data/',exp=3)
+    interpolate_folder('./ratios/','./output_trial/',exp=1,ratio=0.2,rthreshold=0.2)
