@@ -121,4 +121,4 @@ def interpolate_folder(files_path:str,output_path:str,exp:int,ratio=0,rthreshold
         
 if __name__ == "__main__":
 
-    interpolate_folder('./ratios/','./output_trial/',exp=1,ratio=0.2,rthreshold=0.2)
+    interpolate_folder('./ratios/','./output_trial/',exp=1,ratio=0.5,rthreshold=0.2)
