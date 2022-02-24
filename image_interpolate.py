@@ -44,15 +44,18 @@ def load_model(modelDir:str):
     model.device()
     return model
 
+def img_to_tensor(img_0:str)->torch.tensor:
+    img0 = cv2.imread(img_0, cv2.IMREAD_UNCHANGED)
+    img0 =(torch.tensor(img0.transpose(2, 0, 1)).to(device) / 255.).unsqueeze(0)
+    return img0
+
 def interpolate_img(img_0:str,img_1:str,exp:int,model,ratio=0,rthreshold=0.02,
                     rmaxcycles=8):
 
 
-    img0 = cv2.imread(img_0, cv2.IMREAD_UNCHANGED)
-    img1 = cv2.imread(img_1, cv2.IMREAD_UNCHANGED)
-    img0 =(torch.tensor(img0.transpose(2, 0, 1)).to(device) / 255.).unsqueeze(0)
-    img1 =(torch.tensor(img1.transpose(2, 0, 1)).to(device) / 255.).unsqueeze(0)
-        
+    img0 = img_to_tensor(img_0)
+    img1 = img_to_tensor(img_1) 
+    
     n, c, h, w = img0.shape
     ph = ((h - 1) // 32 + 1) * 32
     pw = ((w - 1) // 32 + 1) * 32
@@ -94,31 +97,52 @@ def interpolate_img(img_0:str,img_1:str,exp:int,model,ratio=0,rthreshold=0.02,
                 tmp.append(mid)
             tmp.append(img1)
             img_list = tmp
-    return img_list,h,w
+    return img_list
+
 def save_images(img_list:list,img_0:str,output_path:str,h:int,w:int):
     if not os.path.exists(output_path):
         os.mkdir(output_path)
     for i in range(len(img_list)):
-        if img_0.endswith('.exr') and img_1.endswith('.exr'):
-            cv2.imwrite('{}/img{}.exr'.format(output_path,i), (img_list[i][0]).cpu().numpy().transpose(1, 2, 0)[:h, :w], [cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_HALF])
-        else:
-            cv2.imwrite('{}/img{}.png'.format(output_path,i), (img_list[i][0] * 255).byte().cpu().numpy().transpose(1, 2, 0)[:h, :w])
+        cv2.imwrite('{}/{}.png'.format(output_path,i), (img_list[i][0] * 255).byte().cpu().numpy().transpose(1, 2, 0)[:h, :w])
 
+def make_video(image_folder: str,png:bool,fps:int):
+    video_name = image_folder + "/transition.mp4"
+    term='.png'
+    if png: term='.png'
+    images = [img for img in listdir(image_folder) if img.endswith(term)]
+    names=[int(i[:-4]) for i in images]
+    file_names=sorted(names)
+   # fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    frame = cv2.imread(image_folder + "/" + images[0])
+    height, width, layers = frame.shape
+    video = cv2.VideoWriter(video_name,0, fps, (width, height))
+    for file in file_names:
+        video.write(cv2.imread(image_folder + "/" + str(file)+term))
+    cv2.destroyAllWindows()
+    video.release()
 
 def interpolate_folder(files_path:str,output_path:str,exp:int,ratio=0,rthreshold=0.02,
                     rmaxcycles=8,modelDir='train_log'):
-    images=[img for img in listdir(files_path) if img.endswith('.jpg')]  
+    
+    images=[img for img in listdir(files_path) if img.endswith('.png')]  
     model=load_model(modelDir)
+    
+    tensor_0=img_to_tensor(files_path+'/'+images[0])
+    n, c, h, w = tensor_0.shape
+    
     interpolated=list()
+    
     for i in range(len(images)-1):
-        three,h,w=interpolate_img(files_path+'/'+images[i],files_path+'/'+images[i+1],
+        gen=interpolate_img(files_path+'/'+images[i],files_path+'/'+images[i+1],
                        exp, model)
         if i==len(images)-2:
-            interpolated=[*interpolated,*three]
+            interpolated=[*interpolated,*gen]
+            print(images[i])
         else:
-            interpolated=[*interpolated,*three[:-1]]
+            interpolated=[*interpolated,*gen[:-1]]
     save_images(interpolated,files_path+'/'+images[0],output_path,h,w)
         
 if __name__ == "__main__":
 
-    interpolate_folder('./ratios/','./output_trial/',exp=1,ratio=0.5,rthreshold=0.2)
+    interpolate_folder('./trial/','./outtrial/',exp=3)
+    #make_video('./output_exp3/', True, 8)
