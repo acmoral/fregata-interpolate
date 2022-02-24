@@ -3,6 +3,7 @@
 Created on Tue Feb 22 18:06:22 2022
 
 @author: acmor
+LICENCE-MIT
 """
 ###############################################################################
 
@@ -49,57 +50,30 @@ def img_to_tensor(img_0:str)->torch.tensor:
     img0 =(torch.tensor(img0.transpose(2, 0, 1)).to(device) / 255.).unsqueeze(0)
     return img0
 
-def interpolate_img(img_0:str,img_1:str,exp:int,model,ratio=0,rthreshold=0.02,
-                    rmaxcycles=8):
-
-
-    img0 = img_to_tensor(img_0)
-    img1 = img_to_tensor(img_1) 
+def interpolate_images(img_folder:str,output_path:str,exp:int,modelDir='train_log'):
     
+    model=load_model(modelDir)
+    img_list=[img_to_tensor(img_folder+'/'+img) 
+              for img in listdir(img_folder) if img.endswith('.png')]
+    
+    img0=img_list[0]
     n, c, h, w = img0.shape
     ph = ((h - 1) // 32 + 1) * 32
     pw = ((w - 1) // 32 + 1) * 32
     padding = (0, pw - w, 0, ph - h)
-    img0 = F.pad(img0, padding)
-    img1 = F.pad(img1, padding)
-    
-    if  ratio:
-        img_list = [img0]
-        img0_ratio = 0.0
-        img1_ratio = 1.0
-        if ratio <= img0_ratio + rthreshold / 2:
-            middle = img0
-        elif ratio >= img1_ratio - rthreshold / 2:
-            middle = img1
-        else:
-            tmp_img0 = img0
-            tmp_img1 = img1
-            for inference_cycle in range(rmaxcycles):
-                middle = model.inference(tmp_img0, tmp_img1)
-                middle_ratio = ( img0_ratio + img1_ratio ) / 2
-                if ratio - (rthreshold / 2) <= middle_ratio <= ratio + (rthreshold / 2):
-                    break
-                if  ratio > middle_ratio:
-                    tmp_img0 = middle
-                    img0_ratio = middle_ratio
-                else:
-                    tmp_img1 = middle
-                    img1_ratio = middle_ratio
-        img_list.append(middle)
-        img_list.append(img1)
-    else:
-        img_list = [img0, img1]
-        for i in range(exp):
-            tmp = []
-            for j in range(len(img_list) - 1):
-                mid = model.inference(img_list[j], img_list[j + 1])
-                tmp.append(img_list[j])
-                tmp.append(mid)
-            tmp.append(img1)
-            img_list = tmp
-    return img_list
+    padded_images = [F.pad(img0, padding) for img0 in img_list]
+    img_list=padded_images
+    for i in range(exp):
+        tmp = []
+        for j in range(len(img_list) - 1):
+            mid = model.inference(img_list[j], img_list[j + 1])
+            tmp.append(img_list[j])
+            tmp.append(mid)
+        tmp.append(img_list[-1])
+        img_list = tmp
+    save_images(img_list,output_path,h,w)
 
-def save_images(img_list:list,img_0:str,output_path:str,h:int,w:int):
+def save_images(img_list:list,output_path:str,h:int,w:int):
     if not os.path.exists(output_path):
         os.mkdir(output_path)
     for i in range(len(img_list)):
@@ -120,29 +94,8 @@ def make_video(image_folder: str,png:bool,fps:int):
         video.write(cv2.imread(image_folder + "/" + str(file)+term))
     cv2.destroyAllWindows()
     video.release()
-
-def interpolate_folder(files_path:str,output_path:str,exp:int,ratio=0,rthreshold=0.02,
-                    rmaxcycles=8,modelDir='train_log'):
     
-    images=[img for img in listdir(files_path) if img.endswith('.png')]  
-    model=load_model(modelDir)
-    
-    tensor_0=img_to_tensor(files_path+'/'+images[0])
-    n, c, h, w = tensor_0.shape
-    
-    interpolated=list()
-    
-    for i in range(len(images)-1):
-        gen=interpolate_img(files_path+'/'+images[i],files_path+'/'+images[i+1],
-                       exp, model)
-        if i==len(images)-2:
-            interpolated=[*interpolated,*gen]
-            print(images[i])
-        else:
-            interpolated=[*interpolated,*gen[:-1]]
-    save_images(interpolated,files_path+'/'+images[0],output_path,h,w)
-        
 if __name__ == "__main__":
 
-    interpolate_folder('./trial/','./outtrial/',exp=3)
+    interpolate_images('./data-related/trial/','./data-related/outtrial_2/',exp=2)
     #make_video('./output_exp3/', True, 8)
