@@ -14,6 +14,8 @@ import argparse
 from os import listdir
 from torch.nn import functional as F
 import warnings
+import datetime
+import pandas as pd
 
 ###############################################################################
 
@@ -53,8 +55,9 @@ def img_to_tensor(img_0:str)->torch.tensor:
 def interpolate_images(img_folder:str,output_path:str,exp:int,modelDir='train_log'):
     
     model=load_model(modelDir)
-    img_list=[img_to_tensor(img_folder+'/'+img) 
-              for img in listdir(img_folder) if img.endswith('.png')]
+    dated_df=GetSort_dates(img_folder)
+    file_names=list(dated_df['file_name'])
+    img_list=[img_to_tensor(img_folder+'/'+img+'.png') for img in file_names]
     
     img0=img_list[0]
     n, c, h, w = img0.shape
@@ -78,13 +81,22 @@ def save_images(img_list:list,output_path:str,h:int,w:int):
         os.mkdir(output_path)
     for i in range(len(img_list)):
         cv2.imwrite('{}/{}.png'.format(output_path,i), (img_list[i][0] * 255).byte().cpu().numpy().transpose(1, 2, 0)[:h, :w])
-
+def GetSort_dates(image_folder:str):
+    images = [img for img in listdir(image_folder) if img.endswith('.png')]
+    names=[i[:-4] for i in images]
+    file_names=pd.DataFrame(names, columns=['file_name'])
+    dates=[]
+    for file in file_names['file_name']:
+       dates.append(datetime.datetime.strptime(file[11:19],'%Y%m%d'))
+    file_names['dates']=dates
+    file_names.sort_values(by=['dates'])
+    return file_names
 def make_video(image_folder: str,png:bool,fps:int):
     video_name = image_folder + "/transition.mp4"
-    term='.png'
+    term='.jpg'
     if png: term='.png'
-    images = [img for img in listdir(image_folder) if img.endswith(term)]
-    names=[int(i[:-4]) for i in images]
+    images = [img for img in listdir(image_folder) if img.endswith('.png')]
+    names=[int(i[:-4])for i in images]
     file_names=sorted(names)
    # fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     frame = cv2.imread(image_folder + "/" + images[0])
@@ -97,5 +109,5 @@ def make_video(image_folder: str,png:bool,fps:int):
     
 if __name__ == "__main__":
 
-    interpolate_images('./data-related/trial/','./data-related/outtrial_2/',exp=2)
-    #make_video('./output_exp3/', True, 8)
+    interpolate_images('./data-related/T18PVS_Chl/','./data-related/OutT18PVS_Chl_3/',exp=4)
+    make_video('./data-related/OutT18PVS_Chl_3/', True, 8)
