@@ -16,6 +16,7 @@ from torch.nn import functional as F
 import warnings
 import datetime
 import pandas as pd
+import re
 
 ###############################################################################
 
@@ -29,7 +30,7 @@ if torch.cuda.is_available():
 def load_model(modelDir:str):
     """
     This function loads the weights trained from the repository of arxiv2020-RIFE
-    the weights are stored locally
+    the weights are stored locally in the folder modelDir
     Parameters
     ----------
     modelDir : str
@@ -82,53 +83,12 @@ def img_to_tensor(img_0:str)->torch.tensor:
     img0 =(torch.tensor(img0.transpose(2, 0, 1)).to(device) / 255.).unsqueeze(0)
     return img0
 
-def interpolate_images(img_folder:str,output_path:str,exp:int,modelDir='train_log'):
-    """
-    
-
-    Parameters
-    ----------
-    img_folder : str
-        Location of input images
-    output_path : str
-        the output path to save generated and inbetween input images
-    exp : int
-        the amount of inbetween images to generated between each pair of images
-    modelDir : tf.keras model
-        the path of loaded pretrained model's weights. The default is 'train_log'.
-
-    Returns
-    -------
-    None.
-
-    """
-    model=load_model(modelDir)
-    dated_df=GetSort_dates(img_folder)
-    file_names=list(dated_df['file_name'])
-    img_list=[img_to_tensor(img_folder+'/'+img+'.png') for img in file_names]
-    
-    img0=img_list[0]
-    n, c, h, w = img0.shape
-    ph = ((h - 1) // 32 + 1) * 32
-    pw = ((w - 1) // 32 + 1) * 32
-    padding = (0, pw - w, 0, ph - h)
-    padded_images = [F.pad(img0, padding) for img0 in img_list]
-    img_list=padded_images
-    for i in range(exp):
-        tmp = []
-        for j in range(len(img_list) - 1):
-            mid = model.inference(img_list[j], img_list[j + 1])
-            tmp.append(img_list[j])
-            tmp.append(mid)
-        tmp.append(img_list[-1])
-        img_list = tmp
-    save_images(img_list,output_path,h,w)
-
-def interpolate_images_one_day(img_folder:str,output_path:str,modelDir='train_log'):
+def interpolate_images_one_day(img_folder:str,output_path:str,exp:int,fps:int,video=True,modelDir='train_log'):
     """
     This function returns an amount of interpolated images equal to the number
     of difference in dates between two images. So if there is date 2020/01/01 and
     next image is 2020/01/05 the function will generate 3 images. 
+    The parameter exp allows to specify n number of intermediate images between two images
 
     Parameters
     ----------
@@ -138,8 +98,11 @@ def interpolate_images_one_day(img_folder:str,output_path:str,modelDir='train_lo
        Location/path of  output generated images
     modelDir : tf.keras model
         The path of loaded pretrained model's weights. The default is 'train_log'.
-
-
+    exp : int 
+        The amount of intermediate images to generate
+    fps : int
+        Frames per second to generate the output video
+        
     Returns
     -------
     None.
@@ -174,8 +137,18 @@ def interpolate_images_one_day(img_folder:str,output_path:str,modelDir='train_lo
                 mid = model.inference(img_list[j], img_list[j+1])
                 add_up=int((date_num1-date_num0)/2)
                 dated_df=Update_df(j,add_up,dated_df, mid)
-    save_images(list(dated_df['tensors']),output_path,h,w)
-    
+    image_list=dated_df['tensors']    
+                 
+    if exp:
+        for i in range(exp):
+            for j in range(len(image_list) - 1):
+               mid = model.inference(image_list[j], image_list[j+1])
+               add_up=(1/2)**exp
+               dated_df=Update_df(2*j,add_up,dated_df, mid)
+    dated_df=save_images(dated_df,output_path,h,w)
+    if video:
+        make_video(dated_df,output_path, fps)
+        
 def Update_df(j:int,add_up:int,df,mid):
     """
     
@@ -205,14 +178,15 @@ def Update_df(j:int,add_up:int,df,mid):
 def IsSorted(l:list):
    return all(l[i] <= l[i+1] for i in range(len(l) - 1))
 
-def save_images(img_list:list,output_path:str,h:int,w:int):
+def save_images(df:pd.DataFrame,output_path:str,h:int,w:int):
     """
     
 
     Parameters
     ----------
-    img_list : list
-        the tf.tensor objects to be saved as images
+    df: pd.DataFrame
+        The dataframe stores the tensors to be stored as images
+        and the dates of the images
     output_path : str
         the output path of generated images
     h : int
@@ -222,15 +196,24 @@ def save_images(img_list:list,output_path:str,h:int,w:int):
 
     Returns
     -------
-    None.
+    updated data frame contaning the new names of the files, this is fed to 
+    the video generating function
 
     """
+    img_list=list(df['tensors'])
+    names=list(df['dates'])
     if not os.path.exists(output_path):
         os.mkdir(output_path)
     for i in range(len(img_list)):
-        cv2.imwrite('{}/{}.png'.format(output_path,i), 
+        if (names[i].hour,names[i].minute,names[i].second)==(00,00,00):
+            new_name=str(i)
+        else:
+            new_name=str(i)+'int'
+        df['file_name'].iloc[i]=new_name
+        cv2.imwrite('{}/{}.png'.format(output_path,new_name), 
                     (img_list[i][0] * 255).byte().cpu().numpy().transpose(1, 2, 0)[:h, :w])
-        
+    df=df.sort_values(by=['dates'])
+    return df  
 def GetSort_dates(image_folder:str):
     """
     This function sorts the names of the images according to their date
@@ -257,7 +240,7 @@ def GetSort_dates(image_folder:str):
     file_names=file_names.sort_values(by=['dates'])
     return file_names
 
-def make_video(image_folder: str,png:bool,fps:int):
+def make_video(df:pd.DataFrame,image_folder:str,fps:int):
     """
     
 
@@ -275,22 +258,18 @@ def make_video(image_folder: str,png:bool,fps:int):
     None.
 
     """
+    file_names=list(df['file_name'])
+    print(file_names)
     video_name = image_folder + "/transition.mp4"
-    term='.jpg'
-    if png: term='.png'
-    images = [img for img in listdir(image_folder) if img.endswith('.png')]
-    names=[int(i[:-4])for i in images]
-    file_names=sorted(names)
-   # fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    frame = cv2.imread(image_folder + "/" + images[0])
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    frame = cv2.imread(image_folder + "/" + file_names[0]+'.png')
     height, width, layers = frame.shape
-    video = cv2.VideoWriter(video_name,0, fps, (width, height))
+    video = cv2.VideoWriter(video_name,fourcc, fps, (width, height))
     for file in file_names:
-        video.write(cv2.imread(image_folder + "/" + str(file)+term))
+        video.write(cv2.imread(image_folder + "/" + str(file)+'.png'))
     cv2.destroyAllWindows()
     video.release()
     
 if __name__ == "__main__":
 
-    interpolate_images('./data-related/T18PVS_Turb/','./data-related/T18PVS_Turb4/',exp=4)
-    make_video('./data-related/T18PVS_Turb4/', True, 8)
+    interpolate_images_one_day('./data-related/T18PVS_Chl/','./data-related/T18PVS_OneEachDay/',exp=1,fps=9)
