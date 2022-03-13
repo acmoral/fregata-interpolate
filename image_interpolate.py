@@ -17,6 +17,7 @@ import warnings
 import datetime
 import pandas as pd
 import re
+import tempfile
 
 ###############################################################################
 
@@ -62,7 +63,7 @@ def load_model(modelDir:str):
     model.eval()
     model.device()
     return model
-
+            
 def img_to_tensor(img_0:str)->torch.tensor:
     """
     This functions transforms an image located at PATH=img_0 returning a 
@@ -83,72 +84,6 @@ def img_to_tensor(img_0:str)->torch.tensor:
     img0 =(torch.tensor(img0.transpose(2, 0, 1)).to(device) / 255.).unsqueeze(0)
     return img0
 
-def interpolate_images_one_day(img_folder:str,output_path:str,exp:int,fps:int,video=True,modelDir='train_log'):
-    """
-    This function returns an amount of interpolated images equal to the number
-    of difference in dates between two images. So if there is date 2020/01/01 and
-    next image is 2020/01/05 the function will generate 3 images. 
-    The parameter exp allows to specify n number of intermediate images between two images
-
-    Parameters
-    ----------
-    img_folder : str
-        Location/path of input images
-    output_path : str
-       Location/path of  output generated images
-    modelDir : tf.keras model
-        The path of loaded pretrained model's weights. The default is 'train_log'.
-    exp : int 
-        The amount of intermediate images to generate
-    fps : int
-        Frames per second to generate the output video
-        
-    Returns
-    -------
-    None.
-
-    """
-    model=load_model(modelDir)
-    dated_df=GetSort_dates(img_folder)
-    file_names=list(dated_df['file_name'])
-    img_list=[img_to_tensor(img_folder+'/'+img+'.png') for img in file_names]
-    
-    dates= list(dated_df['dates']-dated_df['dates'].iloc[0])
-    dated_df['day_num']=[date.days for date in dates]
-    
-    img0=img_list[0]
-    n, c, h, w = img0.shape
-    ph = ((h - 1) // 32 + 1) * 32
-    pw = ((w - 1) // 32 + 1) * 32
-    padding = (0, pw - w, 0, ph - h)
-    padded_images = [F.pad(img0, padding) for img0 in img_list]
-    img_list=padded_images
-    dated_df['tensors']=img_list
-    
-    lst = list(range(0,dated_df['day_num'].iloc[-1]+1))   
-    while dated_df['day_num'].tolist() != lst: 
-        img_list=list(dated_df['tensors'])
-        for j in range(len(img_list) - 1):
-            date_num0=dated_df['day_num'].iloc[j]
-            date_num1=dated_df['day_num'].iloc[j+1]
-            if date_num0+1==date_num1:
-                pass
-            else:
-                mid = model.inference(img_list[j], img_list[j+1])
-                add_up=int((date_num1-date_num0)/2)
-                dated_df=Update_df(j,add_up,dated_df, mid)
-    image_list=dated_df['tensors']    
-                 
-    if exp:
-        for i in range(exp):
-            for j in range(len(image_list) - 1):
-               mid = model.inference(image_list[j], image_list[j+1])
-               add_up=(1/2)**exp
-               dated_df=Update_df(2*j,add_up,dated_df, mid)
-    dated_df=save_images(dated_df,output_path,h,w)
-    if video:
-        make_video(dated_df,output_path, fps)
-        
 def Update_df(j:int,add_up:int,df,mid):
     """
     
@@ -174,9 +109,6 @@ def Update_df(j:int,add_up:int,df,mid):
     df=df.append(dic,ignore_index=True)
     df=df.sort_values(by=['dates'])
     return df
-
-def IsSorted(l:list):
-   return all(l[i] <= l[i+1] for i in range(len(l) - 1))
 
 def save_images(df:pd.DataFrame,output_path:str,h:int,w:int):
     """
@@ -213,7 +145,8 @@ def save_images(df:pd.DataFrame,output_path:str,h:int,w:int):
         cv2.imwrite('{}/{}.png'.format(output_path,new_name), 
                     (img_list[i][0] * 255).byte().cpu().numpy().transpose(1, 2, 0)[:h, :w])
     df=df.sort_values(by=['dates'])
-    return df  
+    return df 
+ 
 def GetSort_dates(image_folder:str):
     """
     This function sorts the names of the images according to their date
@@ -240,9 +173,96 @@ def GetSort_dates(image_folder:str):
     file_names=file_names.sort_values(by=['dates'])
     return file_names
 
-def make_video(df:pd.DataFrame,image_folder:str,fps:int):
+def interpolate_video(img_folder:str,output_path:str,exp:int,fps:int,
+                      cdays=True,video=True,modelDir='train_log'):
     """
+    This function returns an amount of interpolated images equal to the number
+    of difference in dates between two images. So if there is date 2020/01/01 and
+    next image is 2020/01/05 the function will generate 3 images. 
+    The parameter exp allows to specify n number of intermediate images between two days
     
+
+    Parameters
+    ----------
+    img_folder : str
+        Location/path of input images
+    output_path : str
+       Location/path of  output generated images
+    modelDir : tf.keras model
+        The path of loaded pretrained model's weights. The default is 'train_log'.
+    exp : int 
+        The amount of intermediate images to generate
+    fps : int
+        Frames per second to generate the output video
+    cdays: bool
+        If true t generated firs the amount of iamges corresponging to missing days 
+        in between two images
+    video: bool
+        if true generates a video
+    modelDir:
+        Where the model wrights are at
+        
+    Returns
+    -------
+    None.
+
+    """
+    model=load_model(modelDir)
+    dated_df=GetSort_dates(img_folder)
+    
+    if listdir(output_path):
+        video_files=True
+    if video_files:
+          dated_df=dated_df.tail(2)
+          dated_df.reset_index(drop=True,inplace=True)
+          os.rename(output_path+'/transition.mp4',output_path+'/temp.mp4')
+    else:
+        print('No video file exists. A new one is being generated')
+        
+    file_names=list(dated_df['file_name'])
+    img_list=[img_to_tensor(img_folder+'/'+img+'.png') for img in file_names]
+    
+    dates= list(dated_df['dates']-dated_df['dates'].iloc[0])
+    dated_df['day_num']=[date.days for date in dates]
+    
+    img0=img_list[0]
+    n, c, h, w = img0.shape
+    ph = ((h - 1) // 32 + 1) * 32
+    pw = ((w - 1) // 32 + 1) * 32
+    padding = (0, pw - w, 0, ph - h)
+    padded_images = [F.pad(img0, padding) for img0 in img_list]
+    img_list=padded_images
+    dated_df['tensors']=img_list
+    if cdays:
+        lst = list(range(0,dated_df['day_num'].iloc[-1]+1))   
+        while dated_df['day_num'].tolist() != lst: 
+            img_list=list(dated_df['tensors'])
+            for j in range(len(img_list) - 1):
+                date_num0=dated_df['day_num'].iloc[j]
+                date_num1=dated_df['day_num'].iloc[j+1]
+                if date_num0+1==date_num1:
+                    pass
+                else:
+                    mid = model.inference(img_list[j], img_list[j+1])
+                    add_up=int((date_num1-date_num0)/2)
+                    dated_df=Update_df(j,add_up,dated_df, mid)
+                
+    image_list=dated_df['tensors']    
+                 
+    if exp:
+        for i in range(exp):
+            for j in range(len(image_list) - 1):
+               mid = model.inference(image_list[j], image_list[j+1])
+               add_up=(1/2)**exp
+               dated_df=Update_df(2*j,add_up,dated_df, mid)
+    if video:
+        makeSave_video(dated_df,output_path, fps,h,w,video_files)
+             
+def makeSave_video(df:pd.DataFrame,output_path:str,fps:int,h:int,w:int,old_videos:bool):
+    """
+    It takes the frames generated and saves it into a video, if a video already
+    exists it reads the old video's frames and appends the last generated frames
+    then it erases the old video.
 
     Parameters
     ----------
@@ -252,24 +272,39 @@ def make_video(df:pd.DataFrame,image_folder:str,fps:int):
         Is the image png or jpg
     fps : int
         Amount of fps to generate the video in mp4 format
-
+    h: int
+        Height of video based on the height of the image
+    w: int
+        Width of wideo based on the width of the image
+    old_videos: bool
+        False if there is no old video
     Returns
     -------
     None.
 
     """
-    file_names=list(df['file_name'])
-    print(file_names)
-    video_name = image_folder + "/transition.mp4"
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    frame = cv2.imread(image_folder + "/" + file_names[0]+'.png')
-    height, width, layers = frame.shape
-    video = cv2.VideoWriter(video_name,fourcc, fps, (width, height))
-    for file in file_names:
-        video.write(cv2.imread(image_folder + "/" + str(file)+'.png'))
-    cv2.destroyAllWindows()
-    video.release()
+    if not os.path.exists(output_path):
+        os.mkdir(output_path)
+    video_name = output_path + "/transition.mp4"
+    frames =list(df['tensors'])
+    frames=[(img[0] * 255).byte().cpu().numpy().transpose(1, 2, 0)[:h, :w]
+            for img in frames]
+    video = cv2.VideoWriter(video_name,0, fps, (w,h))
+    print('writing video [...]')
+    if old_videos:
+        curr_v = cv2.VideoCapture(output_path+'/temp.mp4') # reads old video 
+        while curr_v.isOpened():
+            r, frame = curr_v.read()    
+            if not r:
+                break
+            video.write(frame)            
+    for frame in frames:
+        video.write(frame)
     
-if __name__ == "__main__":
+    cv2.destroyAllWindows()
+    curr_v.release()
+    video.release()
+    os.remove(output_path+'/temp.mp4')
 
-    interpolate_images_one_day('./data-related/T18PVS_Chl/','./data-related/T18PVS_OneEachDay/',exp=1,fps=9)
+if __name__ == "__main__":
+    interpolate_video('./data-related/T18PVS_Chl/','./data-related/T18PVS_OneEachDay/',exp=1,fps=9,cdays=True)
